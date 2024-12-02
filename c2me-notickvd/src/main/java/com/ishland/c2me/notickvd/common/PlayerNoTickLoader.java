@@ -119,10 +119,10 @@ public class PlayerNoTickLoader {
     void tickFutures() {
         this.chunkLoadFutures.removeIf(CompletableFuture::isDone);
 
-        while (this.chunkLoadFutures.size() < Config.maxConcurrentChunkLoads && this.addOneTicket(this.tacs));
+        while (this.chunkLoadFutures.size() < Config.maxConcurrentChunkLoads && this.addOneTicket());
     }
 
-    private boolean addOneTicket(ServerChunkLoadingManager tacs) {
+    private boolean addOneTicket() {
         ObjectBidirectionalIterator<Long2ReferenceMap.Entry<ChunkIterator>> iteratorIterator = this.iterators.long2ReferenceEntrySet().fastIterator();
         while (iteratorIterator.hasNext()) {
             Long2ReferenceMap.Entry<ChunkIterator> entry = iteratorIterator.next();
@@ -130,7 +130,7 @@ public class PlayerNoTickLoader {
             while (iterator.hasNext()) {
                 ChunkPos pos = iterator.next();
                 if (this.managedChunks.add(pos.toLong())) {
-                    this.chunkLoadFutures.add(loadChunk(tacs, pos.x, pos.z));
+                    this.chunkLoadFutures.add(loadChunk(pos.x, pos.z));
                     this.iterators.getAndMoveToLast(entry.getLongKey());
                     return true;
                 }
@@ -140,7 +140,7 @@ public class PlayerNoTickLoader {
         return false;
     }
 
-    private CompletableFuture<Void> loadChunk(ServerChunkLoadingManager tacs, int x, int z) {
+    private CompletableFuture<Void> loadChunk(int x, int z) {
         CompletableFuture<Void> future = this.loadChunk0(x, z);
         future.thenRunAsync(() -> {
             try {
