@@ -1,8 +1,15 @@
 package com.ishland.c2me.notickvd.common;
 
-import com.ishland.c2me.base.mixin.access.IThreadedAnvilChunkStorage;
 import com.ishland.c2me.notickvd.common.iterators.ChunkIterator;
 import com.ishland.c2me.notickvd.common.iterators.SpiralIterator;
+import com.ishland.c2me.rewrites.chunksystem.common.ChunkLoadingContext;
+import com.ishland.c2me.rewrites.chunksystem.common.ChunkState;
+import com.ishland.c2me.rewrites.chunksystem.common.NewChunkHolderVanillaInterface;
+import com.ishland.c2me.rewrites.chunksystem.common.NewChunkStatus;
+import com.ishland.c2me.rewrites.chunksystem.common.ducks.IChunkSystemAccess;
+import com.ishland.flowsched.scheduler.ItemHolder;
+import com.ishland.flowsched.scheduler.ItemTicket;
+import com.ishland.flowsched.scheduler.StatusAdvancingScheduler;
 import com.mojang.logging.LogUtils;
 import it.unimi.dsi.fastutil.longs.Long2ReferenceLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ReferenceMap;
@@ -11,11 +18,7 @@ import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.objects.ObjectBidirectionalIterator;
 import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
-import net.minecraft.server.world.ChunkHolder;
-import net.minecraft.server.world.ChunkTicketManager;
-import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.server.world.ServerChunkLoadingManager;
-import net.minecraft.util.Unit;
 import net.minecraft.util.math.ChunkPos;
 import org.slf4j.Logger;
 
@@ -26,9 +29,9 @@ public class PlayerNoTickLoader {
 
     private static final Logger LOGGER = LogUtils.getLogger();
 
-    public static final ChunkTicketType<Unit> TICKET_TYPE = ChunkTicketType.create("c2me_no_tick_vd", (a, b) -> 0);
+    public static final ItemTicket.TicketType TICKET_TYPE = new ItemTicket.TicketType("c2me:notickvd");
 
-    private final ChunkTicketManager ticketManager;
+    private final ServerChunkLoadingManager tacs;
     private final NoTickSystem noTickSystem;
     private final Long2ReferenceLinkedOpenHashMap<ChunkIterator> iterators = new Long2ReferenceLinkedOpenHashMap<>();
     private final LongSet managedChunks = new LongLinkedOpenHashSet();
@@ -40,8 +43,8 @@ public class PlayerNoTickLoader {
     private boolean recreateIterators = false;
     private volatile long pendingLoadsCountSnapshot = 0L;
 
-    public PlayerNoTickLoader(ChunkTicketManager ticketManager, NoTickSystem noTickSystem) {
-        this.ticketManager = ticketManager;
+    public PlayerNoTickLoader(ServerChunkLoadingManager tacs, NoTickSystem noTickSystem) {
+        this.tacs = tacs;
         this.noTickSystem = noTickSystem;
     }
 
@@ -60,7 +63,7 @@ public class PlayerNoTickLoader {
         this.recreateIterators = true;
     }
 
-    public void tick(ServerChunkLoadingManager tacs) {
+    public void tick() {
         if (this.recreateIterators) {
             this.dirtyManagedChunks = true;
             ObjectBidirectionalIterator<Long2ReferenceMap.Entry<ChunkIterator>> iterator = this.iterators.long2ReferenceEntrySet().fastIterator();
@@ -100,7 +103,7 @@ public class PlayerNoTickLoader {
             this.dirtyManagedChunks = false;
         }
 
-        this.tickFutures(tacs);
+        this.tickFutures();
 
         {
             long pendingLoadsCount = 0L;
@@ -113,10 +116,10 @@ public class PlayerNoTickLoader {
         }
     }
 
-    void tickFutures(ServerChunkLoadingManager tacs) {
+    void tickFutures() {
         this.chunkLoadFutures.removeIf(CompletableFuture::isDone);
 
-        while (this.chunkLoadFutures.size() < Config.maxConcurrentChunkLoads && this.addOneTicket(tacs));
+        while (this.chunkLoadFutures.size() < Config.maxConcurrentChunkLoads && this.addOneTicket(this.tacs));
     }
 
     private boolean addOneTicket(ServerChunkLoadingManager tacs) {
@@ -138,26 +141,11 @@ public class PlayerNoTickLoader {
     }
 
     private CompletableFuture<Void> loadChunk(ServerChunkLoadingManager tacs, int x, int z) {
-        CompletableFuture<Void> future = this.addTicket0(x, z)
-                .thenComposeAsync(unused -> {
-                    ChunkHolder holder = ((IThreadedAnvilChunkStorage) tacs).invokeGetChunkHolder(ChunkPos.toLong(x, z));
-                    if (holder == null) {
-                        LOGGER.warn("No holder created after adding ticket to chunk [{}, {}]", x, z);
-                        return CompletableFuture.completedFuture(null);
-                    } else {
-                        return holder.getAccessibleFuture()
-                                .handle((worldChunkOptionalChunk, throwable) -> {
-                                    if (throwable != null) {
-                                        LOGGER.error("Failed to load chunk [{}, {}]", x, z);
-                                    }
-                                    return null;
-                                });
-                    }
-                }, this.noTickSystem.mainAfterTicketTicks::add);
+        CompletableFuture<Void> future = this.loadChunk0(x, z);
         future.thenRunAsync(() -> {
             try {
                 this.chunkLoadFutures.remove(future);
-                this.tickFutures(tacs);
+                this.tickFutures();
             } catch (Throwable t) {
                 LOGGER.error("Error while loading chunk [{}, {}]", x, z, t);
             }
@@ -165,12 +153,26 @@ public class PlayerNoTickLoader {
         return future;
     }
 
-    private CompletableFuture<Void> addTicket0(int x, int z) {
-        return CompletableFuture.runAsync(() -> this.ticketManager.addTicketWithLevel(TICKET_TYPE, new ChunkPos(x, z), 33, Unit.INSTANCE), this.noTickSystem.mainBeforeTicketTicks::add);
+    private CompletableFuture<Void> loadChunk0(int x, int z) {
+        ChunkPos pos = new ChunkPos(x, z);
+        ItemHolder<ChunkPos, ChunkState, ChunkLoadingContext, NewChunkHolderVanillaInterface> holder = ((IChunkSystemAccess) this.tacs).c2me$getTheChunkSystem().addTicket(
+                pos,
+                TICKET_TYPE,
+                pos,
+                NewChunkStatus.SERVER_ACCESSIBLE_CHUNK_SENDING,
+                StatusAdvancingScheduler.NO_OP
+        );
+        return holder.getFutureForStatus(NewChunkStatus.SERVER_ACCESSIBLE_CHUNK_SENDING);
     }
 
     private void removeTicket0(int x, int z) {
-        this.noTickSystem.mainBeforeTicketTicks.add(() -> this.ticketManager.removeTicketWithLevel(TICKET_TYPE, new ChunkPos(x, z), 33, Unit.INSTANCE));
+        ChunkPos pos = new ChunkPos(x, z);
+        ((IChunkSystemAccess) this.tacs).c2me$getTheChunkSystem().removeTicket(
+                pos,
+                TICKET_TYPE,
+                pos,
+                NewChunkStatus.SERVER_ACCESSIBLE_CHUNK_SENDING
+        );
     }
 
     public long getPendingLoadsCount() {

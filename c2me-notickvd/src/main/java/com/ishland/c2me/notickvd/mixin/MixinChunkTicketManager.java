@@ -1,5 +1,6 @@
 package com.ishland.c2me.notickvd.mixin;
 
+import com.ishland.c2me.base.mixin.access.IThreadedAnvilChunkStorageTicketManager;
 import com.ishland.c2me.notickvd.common.ChunkTicketManagerExtension;
 import com.ishland.c2me.notickvd.common.NoTickSystem;
 import it.unimi.dsi.fastutil.longs.LongSet;
@@ -35,7 +36,7 @@ public class MixinChunkTicketManager implements ChunkTicketManagerExtension {
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void onInit(CallbackInfo ci) {
-        this.noTickSystem = new NoTickSystem((ChunkTicketManager) (Object) this);
+        this.noTickSystem = new NoTickSystem(((IThreadedAnvilChunkStorageTicketManager) this).c2me$getSuperClass());
     }
 
     @Inject(method = "handleChunkEnter", at = @At(value = "INVOKE", target = "Lnet/minecraft/server/world/ChunkTicketManager$DistanceFromNearestPlayerTracker;updateLevel(JIZ)V", ordinal = 0, shift = At.Shift.AFTER))
@@ -61,7 +62,7 @@ public class MixinChunkTicketManager implements ChunkTicketManagerExtension {
     @Inject(method = "update", at = @At("RETURN"))
     private void onTick(ServerChunkLoadingManager chunkStorage, CallbackInfoReturnable<Boolean> cir) {
         this.noTickSystem.afterTicketTicks();
-        this.noTickSystem.tick(chunkStorage);
+        this.noTickSystem.tick();
     }
 
     /**
