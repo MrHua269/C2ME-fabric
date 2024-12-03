@@ -3,7 +3,6 @@ package com.ishland.c2me.notickvd.mixin;
 import com.ishland.c2me.base.mixin.access.IThreadedAnvilChunkStorageTicketManager;
 import com.ishland.c2me.notickvd.common.ChunkTicketManagerExtension;
 import com.ishland.c2me.notickvd.common.NoTickSystem;
-import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ChunkTicketManager;
 import net.minecraft.server.world.ServerChunkLoadingManager;
@@ -85,13 +84,12 @@ public class MixinChunkTicketManager implements ChunkTicketManagerExtension {
 
     @Override
     @Unique
-    public LongSet getNoTickOnlyChunks() {
-        return this.noTickSystem.getNoTickOnlyChunksSnapshot();
+    public long c2me$getPendingLoadsCount() {
+        return this.noTickSystem.getPendingLoadsCount();
     }
 
     @Override
-    @Unique
-    public long getPendingLoadsCount() {
-        return this.noTickSystem.getPendingLoadsCount();
+    public void c2me$closeNoTickVD() {
+        this.noTickSystem.close();
     }
 }

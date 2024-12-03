@@ -23,6 +23,7 @@ import net.minecraft.util.math.ChunkPos;
 import org.slf4j.Logger;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongFunction;
 
 public class PlayerNoTickLoader {
@@ -37,6 +38,7 @@ public class PlayerNoTickLoader {
     private final LongSet managedChunks = new LongLinkedOpenHashSet();
     private final LongFunction<ChunkIterator> createFunction = pos -> new SpiralIterator(ChunkPos.getPackedX(pos), ChunkPos.getPackedZ(pos), this.viewDistance);
     private final ReferenceArrayList<CompletableFuture<Void>> chunkLoadFutures = new ReferenceArrayList<>();
+    private final AtomicBoolean closing = new AtomicBoolean(false);
 
     private int viewDistance = 12;
     private boolean dirtyManagedChunks = false;
@@ -64,6 +66,11 @@ public class PlayerNoTickLoader {
     }
 
     public void tick() {
+        if (this.closing.get()) {
+            clearTickets();
+            return;
+        }
+
         if (this.recreateIterators) {
             this.dirtyManagedChunks = true;
             ObjectBidirectionalIterator<Long2ReferenceMap.Entry<ChunkIterator>> iterator = this.iterators.long2ReferenceEntrySet().fastIterator();
@@ -116,9 +123,21 @@ public class PlayerNoTickLoader {
         }
     }
 
+    private void clearTickets() {
+        LongIterator iterator = this.managedChunks.iterator();
+        while (iterator.hasNext()) {
+            long pos = iterator.nextLong();
+
+            this.removeTicket0(ChunkPos.getPackedX(pos), ChunkPos.getPackedZ(pos));
+
+            iterator.remove();
+        }
+    }
+
     void tickFutures() {
         this.chunkLoadFutures.removeIf(CompletableFuture::isDone);
 
+        if (this.closing.get()) return;
         while (this.chunkLoadFutures.size() < Config.maxConcurrentChunkLoads && this.addOneTicket());
     }
 
@@ -162,7 +181,7 @@ public class PlayerNoTickLoader {
                 NewChunkStatus.SERVER_ACCESSIBLE_CHUNK_SENDING,
                 StatusAdvancingScheduler.NO_OP
         );
-        return holder.getFutureForStatus(NewChunkStatus.SERVER_ACCESSIBLE_CHUNK_SENDING);
+        return holder.getFutureForStatus(NewChunkStatus.SERVER_ACCESSIBLE);
     }
 
     private void removeTicket0(int x, int z) {
@@ -177,5 +196,9 @@ public class PlayerNoTickLoader {
 
     public long getPendingLoadsCount() {
         return this.pendingLoadsCountSnapshot;
+    }
+
+    public void close() {
+        this.closing.set(true);
     }
 }

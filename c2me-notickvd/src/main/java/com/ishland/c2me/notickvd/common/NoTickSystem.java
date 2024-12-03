@@ -95,11 +95,18 @@ public class NoTickSystem {
         this.pendingPurge = true;
     }
 
-    public LongSet getNoTickOnlyChunksSnapshot() {
-        return null;
-    }
-
     public long getPendingLoadsCount() {
         return this.playerNoTickLoader.getPendingLoadsCount();
+    }
+
+    public void close() {
+        this.playerNoTickLoader.close();
+        executor.execute(() -> {
+            try {
+                this.playerNoTickLoader.tick();
+            } catch (Throwable t) {
+                t.printStackTrace();
+            }
+        });
     }
 }
